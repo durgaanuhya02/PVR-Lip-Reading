@@ -71,7 +71,8 @@ def main():
     out_dir = Path(cfg["out_dir"]); out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "config.yaml").write_text(yaml.safe_dump(cfg))
 
-    train_ds = ROIDataset(cfg["index"], cfg.get("train_split", "train"), augment=True)
+    train_ds = ROIDataset(cfg["index"], cfg.get("train_split", "train"), augment=True,
+                          max_clip_frames=cfg.get("max_train_frames"))
     val_ds = ROIDataset(cfg["index"], cfg.get("val_split", "val"), augment=False)
     nw = cfg.get("num_workers", 2)
     train_dl = DataLoader(train_ds, cfg["batch_size"], shuffle=True, collate_fn=collate,

@@ -1,0 +1,27 @@
+# Stage 1 visual model on LRS3 trainval (VALLR's 30-hour setting). Kaggle T4 GPU.
+# `index` is set by notebook 03 to the list of lrs3_trainval_shard*/index.jsonl files.
+index: []
+out_dir: /kaggle/working/runs/visual_lrs3
+train_split: train
+val_split: val
+seed: 0
+
+model:
+  d_model: 256
+  heads: 4
+  layers: 12
+  viseme_layer: 6
+  frontend_width: 64
+  dropout: 0.1
+
+viseme_weight: 0.3       # loss = phoneme CTC + 0.3 * viseme CTC
+max_train_frames: 250    # skip training clips longer than 10 s (GPU memory)
+epochs: 40
+batch_size: 16
+lr: 0.0006
+weight_decay: 0.01
+warmup_epochs: 2
+grad_clip: 5.0
+num_workers: 2
+log_every: 200
+val_batches: 40          # ~640 clips per epoch-end validation (faster)

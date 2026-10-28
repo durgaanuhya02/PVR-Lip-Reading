@@ -104,7 +104,7 @@ def interpolate_missing(points, found):
     return filled.reshape(points.shape)
 
 
-def crop_mouths(frames, lm):
+def crop_mouths(frames, lm, crop_scale=CROP_SCALE):
     lips = lm[:, LIP_IDX]                                        # (T, 40, 3)
     centre = lips[:, :, :2].mean(1)                              # (T, 2)
     kernel = np.ones(SMOOTH_WINDOW) / SMOOTH_WINDOW
@@ -112,7 +112,7 @@ def crop_mouths(frames, lm):
     centre = np.stack([np.convolve(np.pad(centre[:, k], pad, mode="edge"), kernel, "valid")
                        for k in range(2)], 1)
     width = np.linalg.norm(lm[:, LEFT_CORNER, :2] - lm[:, RIGHT_CORNER, :2], axis=1)
-    side = max(int(round(CROP_SCALE * np.median(width))), 16)
+    side = max(int(round(crop_scale * np.median(width))), 16)
 
     rois = np.zeros((len(frames), ROI_SIZE, ROI_SIZE), np.uint8)
     lips_crop = np.zeros_like(lips)
@@ -132,7 +132,7 @@ def crop_mouths(frames, lm):
 _LANDMARKER = None
 
 
-def process(entry, out_dir, every=1):
+def process(entry, out_dir, every=1, crop_scale=CROP_SCALE):
     global _LANDMARKER
     if _LANDMARKER is None:
         _LANDMARKER = make_landmarker()
@@ -143,7 +143,7 @@ def process(entry, out_dir, every=1):
     if not found.any():
         return {"id": entry["id"], "error": "no face detected"}
     lm = interpolate_missing(lm, found)
-    rois, lips = crop_mouths(frames, lm)
+    rois, lips = crop_mouths(frames, lm, crop_scale)
 
     base = Path(out_dir) / entry["id"]
     base.parent.mkdir(parents=True, exist_ok=True)
@@ -178,9 +178,9 @@ def read_video(path):
 
 
 def _worker(args):
-    entry, out_dir, every = args
+    entry, out_dir, every, crop_scale = args
     try:
-        return process(entry, out_dir, every)
+        return process(entry, out_dir, every, crop_scale)
     except Exception as e:  # keep going; failures are logged
         return {"id": entry["id"], "error": repr(e)}
 
@@ -194,6 +194,8 @@ def main():
     ap.add_argument("--shard", default="0/1", help="i/n: process only the i-th of n equal parts")
     ap.add_argument("--detect-every", type=int, default=1,
                     help="run face detection on every N-th frame and interpolate the rest")
+    ap.add_argument("--crop-scale", type=float, default=CROP_SCALE,
+                    help="crop side = crop_scale x median mouth width (match other datasets' framing)")
     args = ap.parse_args()
 
     out_dir = Path(args.out)
@@ -214,7 +216,7 @@ def main():
 
     t0 = time.time()
     with index_path.open("a") as idx, error_path.open("a") as err, mp.Pool(args.workers) as pool:
-        jobs = [(e, out_dir, args.detect_every) for e in todo]
+        jobs = [(e, out_dir, args.detect_every, args.crop_scale) for e in todo]
         for n, res in enumerate(pool.imap_unordered(_worker, jobs, chunksize=4), 1):
             (err if "error" in res else idx).write(json.dumps(res) + "\n")
             if n % 50 == 0 or n == len(todo):

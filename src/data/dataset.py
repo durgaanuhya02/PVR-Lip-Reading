@@ -25,7 +25,7 @@ class ROIDataset(Dataset):
         augment: random crop, horizontal flip and time masking (training only)
     """
 
-    def __init__(self, index_path, split=None, augment=False, max_frames=None):
+    def __init__(self, index_path, split=None, augment=False, max_frames=None, max_clip_frames=None):
         paths = [index_path] if isinstance(index_path, (str, Path)) else index_path
         self.entries = []
         for p in paths:
@@ -33,6 +33,8 @@ class ROIDataset(Dataset):
             for l in Path(p).read_text().splitlines():
                 e = json.loads(l) if l.strip() else None
                 if e and (split is None or e["split"] == split):
+                    if max_clip_frames and e.get("num_frames", 0) > max_clip_frames:
+                        continue                  # skip very long clips (GPU memory)
                     e["_root"] = str(root)
                     self.entries.append(e)
         self.augment = augment
@@ -49,7 +51,10 @@ class ROIDataset(Dataset):
         e = self.entries[i]
         root = Path(e["_root"])
         frames = read_video(root / e["roi"])                          # (T, 96, 96) uint8
-        lm = np.load(root / e["landmarks"])["landmarks"].astype(np.float32)
+        if e.get("landmarks"):
+            lm = np.load(root / e["landmarks"])["landmarks"].astype(np.float32)
+        else:                                                         # pre-cropped data without landmarks
+            lm = np.zeros((len(frames), 40, 3), np.float32)
         T = min(len(frames), len(lm))
         if self.max_frames:
             T = min(T, self.max_frames)
