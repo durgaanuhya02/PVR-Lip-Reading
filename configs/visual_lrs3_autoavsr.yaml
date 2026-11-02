@@ -1,0 +1,28 @@
+# Track B: pre-trained Auto-AVSR encoder + new phoneme/viseme CTC heads on LRS3 trainval (30 h). Kaggle T4 GPU.
+# `index` and `model.checkpoint` are set by notebook 03.
+index: []
+out_dir: /kaggle/working/runs/visual_lrs3_autoavsr
+train_split: train
+val_split: val
+seed: 0
+
+model:
+  arch: autoavsr
+  repo_dir: /kaggle/working/auto_avsr                    # git clone of github.com/mpc001/auto_avsr
+  checkpoint: /kaggle/working/vsr_trlrs3vox2_base.pth   # LRS3 + VoxCeleb2 (1,759 h), 24.6% WER
+  train_layers: 2          # top 2 of 12 Conformer blocks fine-tuned, the rest frozen
+  viseme_layer: 6          # viseme head on block 6
+  dropout: 0.1
+
+viseme_weight: 0.3       # loss = phoneme CTC + 0.3 * viseme CTC
+max_train_frames: 250    # skip training clips longer than 10 s (GPU memory)
+epochs: 10
+batch_size: 8
+lr: 0.0005               # new heads
+encoder_lr_scale: 0.1    # fine-tuned Conformer blocks: lr * 0.1
+weight_decay: 0.01
+warmup_epochs: 1
+grad_clip: 5.0
+num_workers: 2
+log_every: 200
+val_batches: 40

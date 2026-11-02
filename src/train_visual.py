@@ -21,14 +21,19 @@ from torch.utils.data import DataLoader
 
 from src.data.dataset import ROIDataset, collate
 from src.metrics import error_rate
-from src.models.visual import VisualCTC, ctc_losses, greedy_decode
+from src.models import build_visual
+from src.models.visual import ctc_losses, greedy_decode
 
 
 def load_config(path, overrides):
     cfg = yaml.safe_load(Path(path).read_text())
     for kv in overrides or []:
         k, v = kv.split("=", 1)
-        cfg[k] = yaml.safe_load(v)
+        *parents, leaf = k.split(".")          # "model.checkpoint=..." sets cfg["model"]["checkpoint"]
+        node = cfg
+        for p in parents:
+            node = node.setdefault(p, {})
+        node[leaf] = yaml.safe_load(v)
     return cfg
 
 
@@ -81,9 +86,18 @@ def main():
     val_dl = DataLoader(val_ds, cfg["batch_size"], collate_fn=collate, num_workers=nw)
     print(f"device {device} | train {len(train_ds)} | val {len(val_ds)}")
 
-    model = VisualCTC(**cfg["model"]).to(device)
-    print(f"parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.1f} M")
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg.get("weight_decay", 0.01))
+    model = build_visual(cfg["model"]).to(device)
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    print(f"parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.1f} M "
+          f"(trainable {sum(p.numel() for p in trainable) / 1e6:.1f} M)")
+    # pre-trained encoder layers (named "encoder.*") get a smaller learning rate than the new layers
+    scale = cfg.get("encoder_lr_scale", 1.0)
+    groups = [{"params": [p for n, p in model.named_parameters() if p.requires_grad and n.startswith("encoder.")],
+               "lr_scale": scale},
+              {"params": [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith("encoder.")],
+               "lr_scale": 1.0}]
+    opt = torch.optim.AdamW([g for g in groups if g["params"]], lr=cfg["lr"],
+                            weight_decay=cfg.get("weight_decay", 0.01))
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
     total_steps = cfg["epochs"] * len(train_dl)
     warmup = int(cfg.get("warmup_epochs", 1) * len(train_dl))
@@ -102,14 +116,14 @@ def main():
         t0, running = time.time(), []
         for batch in train_dl:
             for g in opt.param_groups:
-                g["lr"] = lr_at(step, total_steps, warmup, cfg["lr"])
+                g["lr"] = lr_at(step, total_steps, warmup, cfg["lr"]) * g["lr_scale"]
             with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
                 out = model(batch["frames"].to(device), batch["lengths"])
             loss, parts = ctc_losses(out, batch, cfg.get("viseme_weight", 0.3))
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.get("grad_clip", 5.0))
+            torch.nn.utils.clip_grad_norm_(trainable, cfg.get("grad_clip", 5.0))
             scaler.step(opt); scaler.update()
             running.append(loss.item()); step += 1
             if step % cfg.get("log_every", 50) == 0:

@@ -110,18 +110,44 @@ OUT = f'/kaggle/working/voxmm_{PART}_shard{SHARD}'
     code(CLEANUP),
 ], gpu=False)
 
+AUTO_AVSR_COMMIT = "182b62837773ab01052d4ac21ef1d2203ea7d267"
+AUTO_AVSR_CKPT = "1shcWXUK2iauRhW9NbwCc25FjU1CoMm8i"   # Google Drive id of vsr_trlrs3vox2_base.pth
+
 train_visual = notebook([
     md("# 03 · Train the visual model on LRS3 trainval (GPU)\n"
        "Add inputs: the outputs of **lrs3-trainval-0/1/2** and **lrs3-test**. Accelerator **GPU T4**, Internet **On**.\n\n"
+       "Run it twice (one notebook copy each), changing `TRACK` in the first cell:\n"
+       "| copy | `TRACK` | model |\n|---|---|---|\n"
+       "| visual-vit | `'vit'` | Track A: VideoMAE ViT-Base + temporal Transformer |\n"
+       "| visual-autoavsr | `'autoavsr'` | Track B: pre-trained Auto-AVSR encoder + new CTC heads |\n\n"
        "The training saves `last.pt` every epoch. If the 12-hour session ends, add this notebook's own "
-       "previous output as input, set `RESUME_FROM`, and run again."),
+       "previous output as input, set `RESUME_FROM`, and run again. At the end it evaluates PER/VER and "
+       "writes the confusion matrices (`eval_val/`, `eval_test/`)."),
+    code("TRACK = 'vit'            # 'vit' (Track A) or 'autoavsr' (Track B)\n"
+         "RESUME_FROM = None       # e.g. '/kaggle/input/<previous-output>/runs/visual_lrs3_vit'"),
     code(SETUP),
-    code("!pip install -q cmudict"),
+    code("!pip install -q cmudict transformers peft gdown"),
     code("import glob, json\n"
          "INDEX = sorted(glob.glob('/kaggle/input/**/lrs3_trainval_shard*/index.jsonl', recursive=True))\n"
          "TEST_INDEX = glob.glob('/kaggle/input/**/lrs3_test_rois/index.jsonl', recursive=True)\n"
          "INDEX_JSON = json.dumps(INDEX)\nprint(INDEX, TEST_INDEX)\n"
-         "RESUME_FROM = None   # e.g. '/kaggle/input/<previous-output>/runs/visual_lrs3'"),
+         "CONFIG = f'configs/visual_lrs3_{TRACK}.yaml'\n"
+         "OUT = f'/kaggle/working/runs/visual_lrs3_{TRACK}'"),
+    md("### Track B only: Auto-AVSR code and checkpoint\n"
+       "If the Google Drive download fails (quota), download `vsr_trlrs3vox2_base.pth` from the "
+       "[Auto-AVSR model zoo](https://github.com/mpc001/auto_avsr), upload it as a Kaggle dataset, add it as "
+       "input and set `CKPT` to its path."),
+    code(f"""CKPT = '/kaggle/working/vsr_trlrs3vox2_base.pth'
+if TRACK == 'autoavsr':
+    if not os.path.exists('/kaggle/working/auto_avsr'):
+        !git clone -q https://github.com/mpc001/auto_avsr /kaggle/working/auto_avsr
+        !cd /kaggle/working/auto_avsr && git checkout -q {AUTO_AVSR_COMMIT}
+    uploaded = glob.glob('/kaggle/input/**/vsr_trlrs3vox2_base.pth', recursive=True)
+    if uploaded:
+        CKPT = uploaded[0]
+    elif not os.path.exists(CKPT):
+        !gdown {AUTO_AVSR_CKPT} -O {{CKPT}}
+    !ls -lh {{CKPT}}"""),
     md("### Check: do our trainval crops look like the pre-cropped LRS3 test crops?\n"
        "Top rows: our MediaPipe crops (trainval). Bottom rows: test-set crops. If the mouth size or position "
        "differs a lot, re-run notebook 01 with a different `--crop-scale` before training."),
@@ -134,16 +160,25 @@ def frames_of(index, n):
 row1 = frames_of(INDEX[0], 6); row2 = frames_of(TEST_INDEX[0], 6)
 plt.figure(figsize=(12, 4)); plt.imshow(np.vstack([np.hstack(row1), np.hstack(row2)]), cmap='gray'); plt.axis('off')
 plt.title('top: our trainval crops   |   bottom: LRS3 test crops'); plt.show()"""),
-    code("import shutil\nOUT = '/kaggle/working/runs/visual_lrs3'\nos.makedirs(OUT, exist_ok=True)\n"
+    code("import shutil\nos.makedirs(OUT, exist_ok=True)\n"
          "if RESUME_FROM:\n    for f in ['last.pt', 'best.pt', 'log.jsonl']:\n"
          "        if os.path.exists(f'{RESUME_FROM}/{f}'): shutil.copy(f'{RESUME_FROM}/{f}', OUT)"),
-    code("!python -m src.train_visual --config configs/visual_lrs3.yaml --set 'index={INDEX_JSON}' out_dir={OUT}"),
+    code("EXTRA = f'model.checkpoint={CKPT}' if TRACK == 'autoavsr' else ''\n"
+         "!python -m src.train_visual --config {CONFIG} --set 'index={INDEX_JSON}' out_dir={OUT} {EXTRA}"),
     code("!tail -5 {OUT}/log.jsonl"),
+    md("## PER / VER and confusion matrices (validation and test)"),
+    code("!python -m src.eval_visual --checkpoint {OUT}/best.pt --index {' '.join(INDEX)} --split val --out {OUT}/eval_val\n"
+         "!python -m src.eval_visual --checkpoint {OUT}/best.pt --index {TEST_INDEX[0]} --split test --out {OUT}/eval_test"),
+    code("from IPython.display import Image, display\n"
+         "display(Image(f'{OUT}/eval_test/confusion_phoneme.png'))\n"
+         "display(Image(f'{OUT}/eval_test/confusion_viseme.png'))\n"
+         "!rm -f {OUT}/last.pt   # keep only best.pt in the saved output"),
 ], gpu=True)
 
 llm_pvr = notebook([
     md("# 04 · LLM + Propose-Verify-Repair (GPU)\n"
-       "Add inputs: LRS3 trainval shards, lrs3-test, voxmm-test, and the output of notebook 03 (`best.pt`). "
+       "Add inputs: LRS3 trainval shards, lrs3-test, voxmm-test, and the output of notebook 03 (`best.pt`); "
+       "for Track B also run `git clone https://github.com/mpc001/auto_avsr /kaggle/working/auto_avsr` first. "
        "Accelerator **GPU T4**, Internet **On**, secret **HF_TOKEN** (with Llama 3.2 access).\n\n"
        "Without Llama access set `LLM = 'Qwen/Qwen2.5-1.5B'`."),
     code(SETUP),
@@ -153,7 +188,8 @@ llm_pvr = notebook([
          "LRS3_TRAIN = sorted(glob.glob('/kaggle/input/**/lrs3_trainval_shard*/index.jsonl', recursive=True))\n"
          "LRS3_TEST = glob.glob('/kaggle/input/**/lrs3_test_rois/index.jsonl', recursive=True)[0]\n"
          "VOXMM_TEST = sorted(glob.glob('/kaggle/input/**/voxmm_test_shard*/index.jsonl', recursive=True))\n"
-         "VISUAL = glob.glob('/kaggle/input/**/visual_lrs3/best.pt', recursive=True)[0]\n"
+         "TRACK = 'vit'   # which notebook-03 model to use: 'vit' (Track A) or 'autoavsr' (Track B)\n"
+         "VISUAL = glob.glob(f'/kaggle/input/**/visual_lrs3_{TRACK}/best.pt', recursive=True)[0]\n"
          "LLM = 'meta-llama/Llama-3.2-1B'\n"
          "TRAIN_ARGS, VOXMM_ARGS = ' '.join(LRS3_TRAIN), ' '.join(VOXMM_TEST)\n"
          "print(LRS3_TRAIN, LRS3_TEST, VOXMM_TEST, VISUAL, sep='\\n')"),

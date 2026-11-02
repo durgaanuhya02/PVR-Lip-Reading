@@ -25,7 +25,8 @@ from torch.utils.data import DataLoader
 from src.data.dataset import ROIDataset, collate
 from src.llm.train_p2t import load_model
 from src.metrics import cer, error_rate, wer
-from src.models.visual import VisualCTC, greedy_decode
+from src.models import build_visual
+from src.models.visual import greedy_decode
 from src.pvr.generate import propose, repair
 from src.pvr.verify import rerank, unsupported_words
 from src.llm.prompts import MASK
@@ -35,8 +36,8 @@ SYSTEMS = ["vallr_1best", "nbest_llm", "verify_phoneme", "verify_viseme", "verif
 
 
 def load_visual(path, device):
-    state = torch.load(path, map_location=device)
-    model = VisualCTC(**state["config"]["model"]).to(device).eval()
+    state = torch.load(path, map_location=device, weights_only=False)
+    model = build_visual(state["config"]["model"], load_pretrained=False).to(device).eval()
     model.load_state_dict(state["model"])
     return model
 
