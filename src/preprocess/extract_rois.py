@@ -134,12 +134,18 @@ _LANDMARKER = None
 
 def process(entry, out_dir, every=1, crop_scale=CROP_SCALE):
     global _LANDMARKER
-    if _LANDMARKER is None:
-        _LANDMARKER = make_landmarker()
     frames, fps = read_frames(entry["video"], entry.get("start") or 0, entry.get("end"))
     if not frames:
         return {"id": entry["id"], "error": "no frames"}
-    lm, found = detect_landmarks(_LANDMARKER, frames, fps, every)
+    # A fresh landmarker per clip keeps MediaPipe's VIDEO-mode timestamps increasing. It is
+    # closed even when the clip fails; otherwise every later clip in this worker fails with
+    # "Input timestamp must be monotonically increasing".
+    _LANDMARKER = make_landmarker()
+    try:
+        lm, found = detect_landmarks(_LANDMARKER, frames, fps, every)
+    finally:
+        _LANDMARKER.close()
+        _LANDMARKER = None
     if not found.any():
         return {"id": entry["id"], "error": "no face detected"}
     lm = interpolate_missing(lm, found)
@@ -149,9 +155,6 @@ def process(entry, out_dir, every=1, crop_scale=CROP_SCALE):
     base.parent.mkdir(parents=True, exist_ok=True)
     write_video(base.with_suffix(".mp4"), rois, fps)
     np.savez_compressed(base.with_suffix(".npz"), landmarks=lips, detected=found)
-    # A fresh landmarker per clip keeps MediaPipe's VIDEO-mode timestamps increasing.
-    _LANDMARKER.close()
-    _LANDMARKER = None
     return {**entry, "roi": f"{entry['id']}.mp4", "landmarks": f"{entry['id']}.npz",
             "num_frames": len(rois), "detect_rate": float(found.mean())}
 
