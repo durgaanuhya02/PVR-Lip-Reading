@@ -40,7 +40,10 @@ class ViTCTC(nn.Module):
         if vit_config:
             self.encoder = VideoMAEModel(VideoMAEConfig(**{**vit_config, **size}))
         elif load_pretrained:
-            self.encoder = VideoMAEModel.from_pretrained(pretrained, **size)
+            self.encoder, info = VideoMAEModel.from_pretrained(pretrained, output_loading_info=True, **size)
+            # transformers 5 renamed VideoMAE's q/v biases, which then load as random weights
+            assert not info["missing_keys"], (f"pre-trained ViT weights missing: {info['missing_keys'][:3]}; "
+                                              "install transformers==4.57.1")
         else:
             self.encoder = VideoMAEModel(VideoMAEConfig.from_pretrained(pretrained, **size))
         cfg = self.encoder.config
