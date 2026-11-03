@@ -126,7 +126,8 @@ train_visual = notebook([
     code("TRACK = 'vit'            # 'vit' (Track A) or 'autoavsr' (Track B)\n"
          "RESUME_FROM = None       # e.g. '/kaggle/input/<previous-output>/runs/visual_lrs3_vit'"),
     code(SETUP),
-    code("!pip install -q cmudict transformers==4.57.1 peft==0.21.2 gdown   # versions the models were tested with"),
+    code("!pip uninstall -y -q torchao   # Kaggle's old torchao makes peft refuse to load; not used here\n"
+         "!pip install -q cmudict transformers==4.57.1 peft==0.21.2 gdown   # versions the models were tested with"),
     code("import glob, json\n"
          "INDEX = sorted(glob.glob('/kaggle/input/**/lrs3_trainval_shard*/index.jsonl', recursive=True))\n"
          "TEST_INDEX = glob.glob('/kaggle/input/**/lrs3_test_rois/index.jsonl', recursive=True)\n"

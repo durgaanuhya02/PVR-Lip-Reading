@@ -102,19 +102,29 @@ def main():
     total_steps = cfg["epochs"] * len(train_dl)
     warmup = int(cfg.get("warmup_epochs", 1) * len(train_dl))
 
-    start_epoch, step, best = 0, 0, float("inf")
+    start_epoch, step, best, batches_done = 0, 0, float("inf"), 0
     ckpt = out_dir / "last.pt"
     if ckpt.exists():
-        state = torch.load(ckpt, map_location=device)
+        state = torch.load(ckpt, map_location=device, weights_only=False)
         model.load_state_dict(state["model"]); opt.load_state_dict(state["opt"])
         scaler.load_state_dict(state["scaler"])
         start_epoch, step, best = state["epoch"] + 1, state["step"], state["best"]
-        print(f"resumed from epoch {start_epoch}")
+        batches_done = state.get("batches_done", 0)      # > 0 when saved in the middle of an epoch
+        print(f"resumed from epoch {start_epoch} (+{batches_done} batches)")
 
+    def save_last(epoch_done, batches):
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(),
+                    "epoch": epoch_done, "step": step, "best": best, "batches_done": batches,
+                    "config": cfg}, ckpt)
+
+    save_every = cfg.get("save_every_steps", 1000)
     log = (out_dir / "log.jsonl").open("a")
     for epoch in range(start_epoch, cfg["epochs"]):
         t0, running = time.time(), []
-        for batch in train_dl:
+        skip, batches_done = batches_done, 0          # a resumed epoch only runs its remaining batches
+        for n_batch, batch in enumerate(train_dl, skip + 1):
+            if n_batch > len(train_dl):
+                break
             for g in opt.param_groups:
                 g["lr"] = lr_at(step, total_steps, warmup, cfg["lr"]) * g["lr_scale"]
             with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
@@ -128,6 +138,8 @@ def main():
             running.append(loss.item()); step += 1
             if step % cfg.get("log_every", 50) == 0:
                 print(f"epoch {epoch} step {step} loss {np.mean(running[-50:]):.3f} {parts}", flush=True)
+            if save_every and step % save_every == 0:    # survive crashes / the 12-hour session limit
+                save_last(epoch - 1, n_batch)
 
         metrics = evaluate(model, val_dl, device, cfg.get("val_batches"))
         rec = {"epoch": epoch, "step": step, "train_loss": float(np.mean(running)),
@@ -135,13 +147,11 @@ def main():
         print(json.dumps(rec), flush=True)
         log.write(json.dumps(rec) + "\n"); log.flush()
 
-        state = {"model": model.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(),
-                 "epoch": epoch, "step": step, "best": min(best, metrics["PER"]), "config": cfg}
-        torch.save(state, ckpt)
         if metrics["PER"] < best:
             best = metrics["PER"]
             torch.save({"model": model.state_dict(), "config": cfg, "epoch": epoch, **metrics},
                        out_dir / "best.pt")
+        save_last(epoch, 0)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from src.text.phonemes import (encode_phonemes, encode_visemes, phonemes_to_vise
 
 CROP = 88
 MEAN, STD = 0.421, 0.165   # grayscale normalisation used by Ma et al. for LRS/LRW
+MIN_FRAMES = 5             # shorter clips are dropped (too short for CTC; some are written unreadable)
 
 
 class ROIDataset(Dataset):
@@ -35,6 +36,8 @@ class ROIDataset(Dataset):
                 if e and (split is None or e["split"] == split):
                     if max_clip_frames and e.get("num_frames", 0) > max_clip_frames:
                         continue                  # skip very long clips (GPU memory)
+                    if e.get("num_frames", MIN_FRAMES) < MIN_FRAMES:
+                        continue
                     e["_root"] = str(root)
                     self.entries.append(e)
         self.augment = augment
@@ -50,7 +53,11 @@ class ROIDataset(Dataset):
     def __getitem__(self, i):
         e = self.entries[i]
         root = Path(e["_root"])
-        frames = read_video(root / e["roi"])                          # (T, 96, 96) uint8
+        try:
+            frames = read_video(root / e["roi"])                      # (T, 96, 96) uint8
+        except ValueError:                                            # unreadable video file
+            print(f"skipping unreadable clip {e['id']}", flush=True)
+            return self[(i + 1) % len(self)]
         if e.get("landmarks"):
             lm = np.load(root / e["landmarks"])["landmarks"].astype(np.float32)
         else:                                                         # pre-cropped data without landmarks
