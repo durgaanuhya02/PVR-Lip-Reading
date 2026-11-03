@@ -10,7 +10,7 @@ Secrets (Kaggle: Add-ons -> Secrets): HF_TOKEN (01, 04), VOXMM_URLS (02).
 import json
 from pathlib import Path
 
-REPO = "https://github.com/durgaanuhya02/MoVi-Swin-Motion--and-Viseme-Aware-Space-Time-Swin-Transformer-for-Robust-and-Efficient-Lip-Reading.git"
+REPO = "https://github.com/durgaanuhya02/PVR-Lip-Reading.git"
 LRS3_REPO = "TheNHz/ellipsis-lrs3-raw"
 
 SETUP = f"""# --- setup: clone the project code ---

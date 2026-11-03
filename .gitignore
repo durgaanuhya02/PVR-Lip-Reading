@@ -23,3 +23,6 @@ desktop.ini
 
 # Downloaded model files
 models_cache/
+
+# Local copies of files removed from the repo
+/_archive/

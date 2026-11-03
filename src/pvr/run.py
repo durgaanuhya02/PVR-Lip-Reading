@@ -11,7 +11,7 @@ Writes <out>/outputs.jsonl (per clip, incl. every candidate and score) and <out>
 `--lam` weights the LLM score; tune it on the validation split with `--sweep`.
 
 Usage:
-    python -m src.pvr.run --visual runs/visual_grid/best.pt --index grid_rois/index.jsonl --split test \
+    python -m src.pvr.run --visual runs/visual_lrs3_vit/best.pt --index lrs3_test_rois/index.jsonl --split test \
         --llm meta-llama/Llama-3.2-1B --adapter runs/llm_p2t/adapter --out runs/pvr_test --n 5 --lam 0.5
 """
 import argparse

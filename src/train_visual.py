@@ -4,8 +4,8 @@ Resumes automatically from <out>/last.pt, so it survives Kaggle's 12-hour
 session limit: just run the same command again.
 
 Usage:
-    python -m src.train_visual --config configs/visual_grid.yaml
-    python -m src.train_visual --config configs/visual_grid.yaml --set epochs=2 batch_size=2   # overrides
+    python -m src.train_visual --config configs/visual_lrs3_vit.yaml
+    python -m src.train_visual --config configs/visual_lrs3_vit.yaml --set epochs=2 batch_size=2   # overrides
 """
 import argparse
 import json

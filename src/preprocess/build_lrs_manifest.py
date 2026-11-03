@@ -4,7 +4,7 @@ Expected layout (LRS2/3 convention):
     <root>/<video_or_speaker_id>/<clip>.mp4
     <root>/<video_or_speaker_id>/<clip>.txt     first line: "Text:  THE SPOKEN SENTENCE"
 
-Every clip becomes one manifest entry (same format as build_grid_manifest.py):
+Every clip becomes one manifest entry:
     {"id": "lrs3/trainval/<folder>/<clip>", "video": ..., "start": 0, "end": null,
      "text": "the spoken sentence", "speaker": "<folder>", "split": ...}
 
