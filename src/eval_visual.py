@@ -1,7 +1,7 @@
 """Evaluate a trained Stage-1 visual model: PER, VER and confusion matrices.
 
 Writes to --out:
-    metrics.json                PER, VER, clip count
+    metrics.json                PER, VER (viseme head), VER_from_phonemes, clip count
     confusion_phoneme.csv/.png  rows = reference phoneme, columns = predicted (+ <del>)
     confusion_viseme.csv/.png   the same for visemes
     top_confusions.txt          most frequent phoneme substitutions
@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 from src.data.dataset import ROIDataset, collate
 from src.metrics import align, error_rate
 from src.models import build_visual
-from src.models.visual import greedy_decode
+from src.models.visual import greedy_decode, visemes_from_phonemes
 from src.text.phonemes import PHONEME_VOCAB, VISEME_VOCAB
 
 DEL = "<del>"
@@ -91,12 +91,13 @@ def main():
     dl = DataLoader(ds, args.batch_size, collate_fn=collate, num_workers=2)
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
 
-    ph_ref, ph_hyp, vi_ref, vi_hyp, ids = [], [], [], [], []
+    ph_ref, ph_hyp, vi_ref, vi_hyp, vp_hyp, ids = [], [], [], [], [], []
     for batch in dl:
         with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
             o = model(batch["frames"].to(device), batch["lengths"])
         ph_hyp += greedy_decode(o["phoneme_logp"], o["lengths"])
         vi_hyp += greedy_decode(o["viseme_logp"], o["lengths"])
+        vp_hyp += greedy_decode(visemes_from_phonemes(o["phoneme_logp"]), o["lengths"])
         ph_ref += [r.tolist() for r in torch.split(batch["phonemes"], batch["phoneme_lengths"].tolist())]
         vi_ref += [r.tolist() for r in torch.split(batch["visemes"], batch["viseme_lengths"].tolist())]
         ids += batch["ids"]
@@ -106,7 +107,9 @@ def main():
     vi_ref_s, vi_hyp_s = sym(vi_ref, VISEME_VOCAB), sym(vi_hyp, VISEME_VOCAB)
 
     metrics = {"split": args.split, "clips": len(ids),
-               "PER": error_rate(ph_ref, ph_hyp), "VER": error_rate(vi_ref, vi_hyp)}
+               "PER": error_rate(ph_ref, ph_hyp), "VER": error_rate(vi_ref, vi_hyp),
+               # visemes obtained by summing phoneme probabilities per viseme group
+               "VER_from_phonemes": error_rate(vi_ref, vp_hyp)}
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
     labels, mat, ins = confusion(ph_ref_s, ph_hyp_s, PHONEME_VOCAB)
@@ -121,6 +124,9 @@ def main():
     v_labels, v_mat, _ = confusion(vi_ref_s, vi_hyp_s, VISEME_VOCAB)
     save_matrix(v_labels, v_mat, out / "confusion_viseme", f"Viseme confusion ({args.split}, VER {metrics['VER']:.1%})")
     np.save(out / "confusion_viseme.npy", v_mat)
+    p_labels, p_mat, _ = confusion(vi_ref_s, sym(vp_hyp, VISEME_VOCAB), VISEME_VOCAB)
+    save_matrix(p_labels, p_mat, out / "confusion_viseme_from_phonemes",
+                f"Viseme confusion from phoneme head ({args.split}, VER {metrics['VER_from_phonemes']:.1%})")
 
     with (out / "predictions.jsonl").open("w") as f:
         for i, a, b, c, d in zip(ids, ph_ref_s, ph_hyp_s, vi_ref_s, vi_hyp_s):

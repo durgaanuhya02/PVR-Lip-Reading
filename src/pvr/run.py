@@ -26,7 +26,7 @@ from src.data.dataset import ROIDataset, collate
 from src.llm.train_p2t import load_model
 from src.metrics import cer, error_rate, wer
 from src.models import build_visual
-from src.models.visual import greedy_decode
+from src.models.visual import greedy_decode, visemes_from_phonemes
 from src.pvr.generate import propose, repair
 from src.pvr.verify import rerank, unsupported_words
 from src.llm.prompts import MASK
@@ -73,6 +73,9 @@ def main():
     ap.add_argument("--repair-rounds", type=int, default=2)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--sweep", action="store_true", help="also report WER for a grid of lambda values")
+    ap.add_argument("--viseme-source", choices=["head", "phonemes"], default="head",
+                    help="viseme scores from the viseme CTC head, or summed from the phoneme head "
+                         "(better when the viseme head is weaker, e.g. Track B)")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -91,7 +94,9 @@ def main():
         for batch in dl:
             with torch.no_grad():
                 o = visual(batch["frames"].to(device), batch["lengths"])
-            ph_logp, vi_logp = o["phoneme_logp"][0].cpu(), o["viseme_logp"][0].cpu()
+            ph_logp = o["phoneme_logp"][0].cpu()
+            vi_logp = (visemes_from_phonemes(ph_logp) if args.viseme_source == "phonemes"
+                       else o["viseme_logp"][0].cpu())
             phonemes = decode_ids(greedy_decode(o["phoneme_logp"], o["lengths"])[0], PHONEME_VOCAB)
 
             one = propose(llm, tok, phonemes, n=1)

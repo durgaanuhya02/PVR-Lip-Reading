@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.text.phonemes import PHONEME_VOCAB, VISEME_VOCAB
+from src.text.phonemes import PHONEME_ID_TO_VISEME_ID, PHONEME_VOCAB, VISEME_VOCAB
 
 
 # --------------------------------------------------------------------------- front-end
@@ -154,6 +154,14 @@ def ctc_losses(out, batch, viseme_weight=0.3):
     vi = F.ctc_loss(out["viseme_logp"].transpose(0, 1), batch["visemes"], lens,
                     batch["viseme_lengths"], blank=0, zero_infinity=True)
     return ph + viseme_weight * vi, {"phoneme_ctc": ph.item(), "viseme_ctc": vi.item()}
+
+
+def visemes_from_phonemes(phoneme_logp):
+    """Viseme log-probs from the phoneme head: the probability of a viseme is the sum of the
+    probabilities of its phonemes (e.g. P + B + M -> BILABIAL; blank -> blank).
+    (..., 40) -> (..., 14). An alternative to the viseme head when that head is weaker."""
+    group = torch.tensor(PHONEME_ID_TO_VISEME_ID, device=phoneme_logp.device)
+    return torch.stack([phoneme_logp[..., group == v].logsumexp(-1) for v in range(len(VISEME_VOCAB))], -1)
 
 
 def greedy_decode(logp, lengths):
