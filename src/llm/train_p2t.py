@@ -53,8 +53,15 @@ def load_model(name, lora_cfg=None, adapter=None, quantize=True):
 def encode(tok, prompt, tgt, max_len):
     p = tok(prompt, add_special_tokens=True)["input_ids"]
     t = tok(tgt, add_special_tokens=False)["input_ids"] + [tok.eos_token_id]
-    ids = (p + t)[:max_len]
-    labels = ([-100] * len(p) + t)[:max_len]
+    # keep the whole target and cut the prompt from the left; cutting (p + t) from the right
+    # left long examples with no target tokens at all, which gave NaN losses
+    if len(t) >= max_len:
+        t = t[-(max_len - 1):]
+        p = []
+    else:
+        p = p[-(max_len - len(t)):]
+    ids = p + t
+    labels = ([-100] * len(p)) + t
     return ids, labels
 
 

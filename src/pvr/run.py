@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--viseme-source", choices=["head", "phonemes"], default="head",
                     help="viseme scores from the viseme CTC head, or summed from the phoneme head "
                          "(better when the viseme head is weaker, e.g. Track B)")
+    ap.add_argument("--resume", action="store_true",
+                    help="keep the clips already in <out>/outputs.jsonl and continue after a disconnect")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -86,11 +88,22 @@ def main():
     ds = ROIDataset(args.index, args.split)
     if args.limit:
         ds.entries = ds.entries[:args.limit]
-    dl = DataLoader(ds, 1, collate_fn=collate)
     out_dir = Path(args.out); out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "outputs.jsonl"
 
     records = []
-    with (out_dir / "outputs.jsonl").open("w") as f:
+    if args.resume and out_path.exists():
+        for l in out_path.read_text().splitlines():
+            try:
+                records.append(json.loads(l))
+            except json.JSONDecodeError:          # last line cut off by a disconnect
+                pass
+        done = {r["id"] for r in records}
+        ds.entries = [e for e in ds.entries if e["id"] not in done]
+        out_path.write_text("".join(json.dumps(r) + "\n" for r in records))
+        print(f"resuming: {len(done)} clips done, {len(ds.entries)} left", flush=True)
+    dl = DataLoader(ds, 1, collate_fn=collate)
+    with out_path.open("a" if args.resume else "w") as f:
         for batch in dl:
             with torch.no_grad():
                 o = visual(batch["frames"].to(device), batch["lengths"])

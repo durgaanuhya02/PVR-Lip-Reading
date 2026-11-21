@@ -55,7 +55,7 @@ def make_draft(words, vocab, rng):
 
 def sentences_from_wikitext(limit):
     from datasets import load_dataset
-    ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="train")
+    ds = load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1", split="train")
     n = 0
     for row in ds:
         line = row["text"].strip()
